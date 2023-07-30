@@ -1,0 +1,11 @@
+/tfrecords
+/masks
+/images
+/.vscode
+/*.keras
+/dataloader.py
+/__notebook_source__.ipynb
+/__pycache__
+/archive.zip
+/*.h5
+/logs
