@@ -5,6 +5,7 @@ from tqdm import tqdm
 import gc
 import matplotlib.pyplot as plt
 from volumentations import *
+import pandas as pd
 
 
 # Helper Functions
@@ -16,11 +17,12 @@ def image_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value.numpy()]))
 
 
-def create_example(volume, mask, shape):
+def create_example(volume, mask, type, shape):
     feature = {
         "volume": image_feature(tf.io.serialize_tensor(volume)),
         "mask": image_feature(tf.io.serialize_tensor(mask)),
         "shape": _int64_feature(shape),
+        "type": _int64_feature(type),
     }
     example = tf.train.Example(features=tf.train.Features(feature=feature))
     return example.SerializeToString()
@@ -39,8 +41,12 @@ def scale(volume):
     return np.float32(volume)
 
 
-img_nrrd_root = "./images"
-msk_nrrd_root = "./masks"
+img_nrrd_root = "./data/images"
+msk_nrrd_root = "./data/masks"
+table = pd.read_csv("./data/labels.csv")
+labels = np.where(table["label"] == "M", 1, 0)
+
+
 num_tfrecords = 5
 Normalize = True
 
@@ -82,10 +88,11 @@ for i in range(num_tfrecords):
                 min(hD + margin_d, msk.shape[2]),
             )
             serialized_example = create_example(
-                vol[lH:hH, lW:hW, lD:hD], msk[lH:hH, lW:hW, lD:hD], shape
+                vol[lH:hH, lW:hW, lD:hD], msk[lH:hH, lW:hW, lD:hD], [labels[j]], shape
             )
             writer.write(serialized_example)
             del serialized_example
             gc.collect()
-#             break
-#     break
+            # if j > 4:
+            #     break
+    # break

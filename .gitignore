@@ -1,6 +1,5 @@
 /tfrecords
-/masks
-/images
+/data
 /.vscode
 /*.keras
 /dataloader.py

@@ -1,6 +1,26 @@
+import pandas as pd
 import numpy as np
-import tensorflow as tf
-from models import get_XNet
+from dataloader import *
+from models import *
+
+TFRecord_filenames = [
+    "./tfrecords/tsdc_abus_0.tfrec",
+    "./tfrecords/tsdc_abus_1.tfrec",
+    "./tfrecords/tsdc_abus_2.tfrec",
+    "./tfrecords/tsdc_abus_3.tfrec",
+    "./tfrecords/tsdc_abus_4.tfrec",
+]
+tr_ds = prepare_dataset(
+    TFRecord_filenames[:-1],
+    batch_size=4,
+    patch_size=(64, 64, 64),
+)
+for _ in range(3):
+    print("_______________88888888888888888")
+    for x, y, c in tr_ds:
+        print(x.shape, y.shape, c)
+    # print(y)
+    # break
 swin_args = {
     "input_shape": (64, 64, 64, 1),
     "embed_dim": 48,
@@ -17,6 +37,7 @@ swin_args = {
     "proj_drop": 0.0,
 }
 
-# xnet = get_XNet(**swin_args)
-model = tf.keras.models.load_model("/home/user/abus/fold1_xnet_w7_p4_e48.keras")
-print(model.summary(line_length=128))
+
+# m = get_XNet_V2(**swin_args)
+# o = m(np.ones((1, 64, 64, 64, 1)))
+# print(m.summary(line_length=128))

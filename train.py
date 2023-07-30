@@ -9,7 +9,6 @@ from tqdm import tqdm
 from summary import summary_logger
 
 
-
 TFRecord_filenames = [
     "./tfrecords/tsdc_abus_0.tfrec",
     "./tfrecords/tsdc_abus_1.tfrec",
@@ -46,6 +45,7 @@ tr_ds = prepare_dataset(
     batch_size=train_args["batch_size"],
     patch_size=swin_args["input_shape"][:-1],
 )
+
 vl_ds = prepare_dataset(
     TFRecord_filenames[-1], batch_size=1, patch_size=swin_args["input_shape"][:-1]
 )
@@ -58,8 +58,9 @@ model = get_XNet(**swin_args)
 scheduled_lrs = get_warmup_schedule(**train_args)
 optim = optimizers.AdamW(learning_rate=scheduled_lrs, weight_decay=1e-4)
 
+
 @tf.function
-def train_step(x,y):
+def train_step(x, y):
     with tf.GradientTape() as tape:
         conv_out, swin_out = model(x)
         l1 = swin_loss(y, swin_out)
@@ -72,12 +73,13 @@ def train_step(x,y):
 
 
 @tf.function
-def val_step(x,y):
+def val_step(x, y):
     conv_out, swin_out = model(x)
     l1 = swin_loss(y, swin_out)
     l2 = conv_loss(y, conv_out)
     val_loss = l1 + 3.0 * l2
     return val_loss
+
 
 def train(
     model,
@@ -97,16 +99,16 @@ def train(
             bar_format="{desc}|{percentage:3.0f}%| {elapsed} |{n_fmt}/{total_fmt}|{postfix}"
         ) as bar:
             train_losses, val_losses = [], []
-            for x, y in train_dataset:
-                tr_loss = train_step(x,y)
+            for x, y, c in train_dataset:
+                tr_loss = train_step(x, y)
                 train_losses.append(tr_loss)
                 bar.set_postfix_str("train_loss={:.3f}".format(tr_loss))
                 bar.update()
-            
-            for x, y in val_dataset:
-                val_loss = val_step(x,y)
+
+            for x, y, c in val_dataset:
+                val_loss = val_step(x, y)
                 val_losses.append(val_loss)
-            
+
             tr_loss = np.mean(train_losses)
             val_loss = np.mean(val_losses)
 
