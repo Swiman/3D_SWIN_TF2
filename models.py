@@ -167,7 +167,8 @@ def get_swin_AE(
 ):
     dpr = np.linspace(0, drop_path, sum(depths))
     num_stages = len(depths)
-    bottleneck_dim = max(int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
+    bottleneck_dim = max(
+        int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
     I = layers.Input(input_shape, name="input")
     #     x, mask_indeces = Masked_PatchEmbedding(patch_size=patch_size, mask_ratio=mask_ratio, embed_dim=embed_dim, use_norm=True,name="Patch_Embed")(I)
     x = PatchEmbedding(
@@ -204,7 +205,8 @@ def get_swin_AE(
         filters=embed_dim * 8, kernel_size=2, strides=2, name="e3_up"
     )(p)
     for i in range(1, 4):
-        d = layers.Concatenate(axis=-1, name=f"conc{3-i}")([p, swin_enc_outs[3 - i]])
+        d = layers.Concatenate(
+            axis=-1, name=f"conc{3-i}")([p, swin_enc_outs[3 - i]])
         p = Double_CIR(
             filters=embed_dim * 2 ** (4 - i),
             kernel_size=min((2**i) * bottleneck_dim, 3),
@@ -240,7 +242,8 @@ def get_swin_AE(
         padding="SAME",
         name="p",
     )(p_up)
-    out = layers.Conv3D(filters=1, kernel_size=3, padding="same", name="last_p")(c_1)
+    out = layers.Conv3D(filters=1, kernel_size=3,
+                        padding="same", name="last_p")(c_1)
     return Model(inputs=I, outputs=[out])
 
 
@@ -261,7 +264,8 @@ def get_XNet(
 ):
     dpr = np.linspace(0, drop_path, sum(depths))
     num_stages = len(depths)
-    bottleneck_dim = max(int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
+    bottleneck_dim = max(
+        int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
     I = layers.Input(input_shape, name="input")
     conv_AE = get_conv_AE(input_shape, patch_size, embed_dim, num_stages)
     out = conv_AE(I)
@@ -325,7 +329,8 @@ def get_XNet(
     d = layers.Conv3DTranspose(
         filters=embed_dim * 2 ** (3 - i), kernel_size=2, strides=2, name="p_up"
     )(d)
-    swin_AE_out = layers.Conv3D(filters=1, kernel_size=3, padding="same", name="o")(d)
+    swin_AE_out = layers.Conv3D(
+        filters=1, kernel_size=3, padding="same", name="o")(d)
     return Model(inputs=I, outputs=[conv_AE_out, swin_AE_out])
 
 
@@ -346,7 +351,8 @@ def get_XNet_V2(
 ):
     dpr = np.linspace(0, drop_path, sum(depths))
     num_stages = len(depths)
-    bottleneck_dim = max(int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
+    bottleneck_dim = max(
+        int(input_shape[1] / (patch_size[0] * 2**num_stages)), 1)
     I = layers.Input(input_shape, name="input")
     conv_AE = get_conv_encoder(input_shape, patch_size, embed_dim, num_stages)
     out = conv_AE(I)
@@ -379,7 +385,8 @@ def get_XNet_V2(
         padding="SAME",
         name="e",
     )(e)
-    bottleneck_features = layers.Concatenate(name="bottleneck_conc")([conv_AE_out, e])
+    bottleneck_features = layers.Concatenate(
+        name="bottleneck_conc")([conv_AE_out, e])
     cls = layers.Dense(name="bottleneck_fc1", units=512, activation="leaky_relu")(
         bottleneck_features
     )
@@ -394,7 +401,7 @@ def get_XNet_V2(
             [d, conv_encoder_outs[4 - i]]
         )
         d = Double_CIR(
-            filters=embed_dim * 2 ** (3 - i),
+            filters=embed_dim * 2 ** (4 - i),
             kernel_size=min((2**i) * bottleneck_dim, 3),
             strides=1,
             use_bias=False,
@@ -402,13 +409,14 @@ def get_XNet_V2(
             name=f"d{4-i}",
         )(d)
         d = layers.Conv3DTranspose(
-            filters=embed_dim * 2 ** (3 - i),
+            filters=embed_dim * 2 ** (4 - i),
             kernel_size=2,
             strides=2,
             name=f"p{4-i}_up",
         )(d)
 
-    swin_AE_out = layers.Conv3D(filters=1, kernel_size=3, padding="same", name="o")(d)
+    swin_AE_out = layers.Conv3D(
+        filters=1, kernel_size=3, padding="same", name="o")(d)
     return Model(inputs=I, outputs=[swin_AE_out, cls])
 
 

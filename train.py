@@ -51,7 +51,8 @@ def train(
             )
             if val_loss < best_val:
                 epoch_end_str = (
-                    epoch_end_str + f" improved from {best_val:.5f}. Saving Model!"
+                    epoch_end_str +
+                    f" improved from {best_val:.5f}. Saving Model!"
                 )
                 best_val = val_loss
                 model.model.save(model_checkpoint_dir)
@@ -109,7 +110,8 @@ def __main__():
     optim = optimizers.AdamW(learning_rate=scheduled_lrs, weight_decay=1e-4)
 
     # model = XNet(conv_loss=WCE, swin_loss=DICE, **swin_args)
-    model = XNet_v2(optimizer=optim, cls_loss=BCE, swin_loss=Dice_WCE, **swin_args)
+    model = XNet_v2(optimizer=optim, cls_loss=BCE,
+                    swin_loss=Dice_WCE, **swin_args)
 
     train(
         model,
