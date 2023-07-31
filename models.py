@@ -124,7 +124,7 @@ def get_conv_encoder(input_shape, patch_size, embed_dim, num_stages):
     )(e1)
     #     e = layers.Conv3D(filters=embed_dim,kernel_size=patch_size[0],strides=patch_size[0], use_bias=True, padding="SAME", name=f"e_first")(I)
     e = e2
-    encoder_stages = []
+    encoder_stages = [e1]
     for i in range(num_stages):
         e = Double_CIR(
             filters=embed_dim * 2**i,
@@ -389,9 +389,9 @@ def get_XNet_V2(
         filters=embed_dim * 8, kernel_size=2, strides=2, name="e3_up"
     )(e)
 
-    for i in range(4):
-        d = layers.Concatenate(axis=-1, name=f"conc{3-i}")(
-            [d, conv_encoder_outs[3 - i]]
+    for i in range(5):
+        d = layers.Concatenate(axis=-1, name=f"conc{4-i}")(
+            [d, conv_encoder_outs[4 - i]]
         )
         d = Double_CIR(
             filters=embed_dim * 2 ** (3 - i),
@@ -399,17 +399,91 @@ def get_XNet_V2(
             strides=1,
             use_bias=False,
             padding="SAME",
-            name=f"d{3-i}",
+            name=f"d{4-i}",
         )(d)
         d = layers.Conv3DTranspose(
             filters=embed_dim * 2 ** (3 - i),
             kernel_size=2,
             strides=2,
-            name=f"p{3-i}_up",
+            name=f"p{4-i}_up",
         )(d)
 
-    d = layers.Conv3DTranspose(
-        filters=embed_dim * 2 ** (3 - i), kernel_size=2, strides=2, name="p_up"
-    )(d)
     swin_AE_out = layers.Conv3D(filters=1, kernel_size=3, padding="same", name="o")(d)
     return Model(inputs=I, outputs=[swin_AE_out, cls])
+
+
+class XNet(object):
+    def __init__(self, optimizer, conv_loss, swin_loss, **model_args):
+        self.model = get_XNet(**model_args)
+        self.optim = optimizer
+        self.conv_loss = conv_loss
+        self.swin_loss = swin_loss
+
+    @tf.function
+    def train_step(self, x, *args):
+        with tf.GradientTape() as tape:
+            conv_out, swin_out = self.model(x)
+            l1 = self.swin_loss(args[0], swin_out)
+            l2 = self.conv_loss(args[0], conv_out)
+            tr_loss = l1 + 3.0 * l2
+        trainable_vars = self.model.trainable_variables
+        grads = tape.gradient(tr_loss, trainable_vars)
+        self.optim.apply_gradients(zip(grads, trainable_vars))
+        return tr_loss
+
+    @tf.function
+    def val_step(self, x, *args):
+        conv_out, swin_out = self.model(x)
+        l1 = self.swin_loss(args[0], swin_out)
+        l2 = self.conv_loss(args[0], conv_out)
+        val_loss = l1 + 3.0 * l2
+        return val_loss
+
+
+class XNet_v2(object):
+    def __init__(self, optimizer, cls_loss, swin_loss, **model_args):
+        self.model = get_XNet_V2(**model_args)
+        self.optim = optimizer
+        self.cls_loss = cls_loss
+        self.swin_loss = swin_loss
+
+    @tf.function
+    def train_step(self, x, *args):
+        with tf.GradientTape() as tape:
+            swin_out, cls = self.model(x)
+            l1 = self.swin_loss(args[0], swin_out)
+            l2 = self.cls_loss(args[1], cls)
+            tr_loss = 0.7 * l1 + 0.3 * l2
+        trainable_vars = self.model.trainable_variables
+        grads = tape.gradient(tr_loss, trainable_vars)
+        self.optim.apply_gradients(zip(grads, trainable_vars))
+        return tr_loss
+
+    @tf.function
+    def val_step(self, x, *args):
+        swin_out, cls = self.model(x)
+        l1 = self.swin_loss(args[0], swin_out)
+        l2 = self.cls_loss(args[1], cls)
+        val_loss = 0.7 * l1 + 0.3 * l2
+        return val_loss
+
+
+# swin_args = {
+#     "input_shape": (64, 64, 64, 1),
+#     "embed_dim": 48,
+#     "window_size": [7, 7, 7],
+#     "patch_size": [4, 4, 4],
+#     "mask_ratio": 0.01,
+#     "depths": [2, 2, 2, 2],
+#     "mlp_ratio": 4.0,
+#     "num_heads": [3, 6, 12, 24],
+#     "patch_norm": True,
+#     "qkv_bias": True,
+#     "drop_path": 0.5,
+#     "attn_drop": 0.0,
+#     "proj_drop": 0.0,
+# }
+
+# m = get_XNet_V2(**swin_args)
+# m(np.ones((1, 64, 64, 64, 1)))
+# print(m.summary(line_length=128))
