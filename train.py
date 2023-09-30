@@ -25,28 +25,32 @@ def train(
         with tqdm(
             bar_format="{desc}|{percentage:3.0f}%| {elapsed} |{n_fmt}/{total_fmt}|{postfix}"
         ) as bar:
-            train_losses, val_losses = [], []
+
             for x, y, c in train_dataset:
-                tr_loss = model.train_step(x, y, c)
-                train_losses.append(tr_loss)
-                bar.set_postfix_str("train_loss={:.3f}".format(tr_loss))
+                model.train_step(x, y, c)
+                tr_loss = model.metrics["tr_loss"].result().numpy()
+                bar.set_postfix_str(
+                    "train_loss={:.3f}".format(tr_loss))
                 bar.update()
 
             for x, y, c in val_dataset:
-                val_loss = model.val_step(x, y, c)
-                val_losses.append(val_loss)
-
-            tr_loss = np.mean(train_losses)
-            val_loss = np.mean(val_losses)
+                model.val_step(x, y, c)
+            val_loss = model.metrics["vl_loss"].result().numpy()
 
             logger.write(tr_loss, val_loss, i)
 
             epoch_end_str = (
-                "Epoch({}): lr={:.5f}, tr_loss={:.5f}, val_loss={:.5f}".format(
+                "Epoch({}): lr={:.5f}, tr_iou={:.4f}, tr_rec={:.5f}, tr_pre={:.5f}, tr_loss={:.5f}, vl_iou={:.5f}, vl_rec={:.5f}, vl_pre={:.5f}, vl_loss={:.5f}".format(
                     str(i + 1).zfill(3),
                     model.optim.learning_rate.numpy(),
+                    model.metrics["tr_iou"].result().numpy(),
+                    model.metrics["tr_rec"].result().numpy(),
+                    model.metrics["tr_pre"].result().numpy(),
                     tr_loss,
-                    val_loss,
+                    model.metrics["vl_iou"].result().numpy(),
+                    model.metrics["vl_rec"].result().numpy(),
+                    model.metrics["vl_pre"].result().numpy(),
+                    val_loss
                 )
             )
             if val_loss < best_val:
@@ -58,15 +62,14 @@ def train(
                 model.model.save(model_checkpoint_dir)
 
             bar.set_postfix_str(epoch_end_str)
+            for k in model.metrics.keys():
+                model.metrics[k].reset_state()
 
 
 def __main__():
     TFRecord_filenames = [
-        "./tfrecords/tsdc_abus_0.tfrec",
-        "./tfrecords/tsdc_abus_1.tfrec",
-        "./tfrecords/tsdc_abus_2.tfrec",
-        "./tfrecords/tsdc_abus_3.tfrec",
-        "./tfrecords/tsdc_abus_4.tfrec",
+        "./tfrecords/1.tfrec",
+        "./tfrecords/2.tfrec",
     ]
 
     train_args = {
@@ -119,7 +122,7 @@ def __main__():
         vl_ds,
         epochs=train_args["epochs"],
         logger=logger,
-        model_checkpoint_dir="./fold1_xnet_cls_w7_p4_e48.keras",
+        model_checkpoint_dir="./model.keras",
     )
 
 

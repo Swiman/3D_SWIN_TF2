@@ -1,5 +1,5 @@
 from layers import *
-from tensorflow.keras import Model
+from tensorflow.keras import Model, metrics, Sequential
 
 
 def get_conv_AE(input_shape, patch_size, embed_dim, num_stages):
@@ -385,12 +385,12 @@ def get_XNet_V2(
         padding="SAME",
         name="e",
     )(e)
-    bottleneck_features = layers.Concatenate(
-        name="bottleneck_conc")([conv_AE_out, e])
-    cls = layers.Dense(name="bottleneck_fc1", units=512, activation="leaky_relu")(
-        bottleneck_features
+    # bottleneck_features = layers.Concatenate(
+    #     name="bottleneck_conc")([conv_AE_out, e])
+    cls = layers.Dense(name="bottleneck_fc1", units=256, activation="leaky_relu")(
+        conv_AE_out
     )
-    cls = layers.Dense(name="bottleneck_fc1", units=1)(bottleneck_features)
+    cls = layers.Dense(name="bottleneck_fc2", units=1)(cls)
     cls = layers.Reshape(name="reshape", target_shape=(1,))(cls)
     d = layers.Conv3DTranspose(
         filters=embed_dim * 8, kernel_size=2, strides=2, name="e3_up"
@@ -454,6 +454,15 @@ class XNet_v2(object):
         self.optim = optimizer
         self.cls_loss = cls_loss
         self.swin_loss = swin_loss
+        self.metrics = {"tr_loss": metrics.Mean(name="tr_loss"),
+                        "vl_loss": metrics.Mean(name="vl_loss"),
+                        "tr_iou": metrics.BinaryIoU(target_class_ids=[1], name="tr_iou"),
+                        "vl_iou": metrics.BinaryIoU(target_class_ids=[1], name="vl_iou"),
+                        "tr_rec": metrics.Recall(name="tr_rec"),
+                        "tr_pre": metrics.Precision(name="tr_pre"),
+                        "vl_rec": metrics.Recall(name="vl_rec"),
+                        "vl_pre": metrics.Precision(name="vl_pre")
+                        }
 
     @tf.function
     def train_step(self, x, *args):
@@ -465,7 +474,10 @@ class XNet_v2(object):
         trainable_vars = self.model.trainable_variables
         grads = tape.gradient(tr_loss, trainable_vars)
         self.optim.apply_gradients(zip(grads, trainable_vars))
-        return tr_loss
+        self.metrics["tr_loss"].update_state(tr_loss)
+        self.metrics["tr_iou"].update_state(args[0], tf.nn.sigmoid(swin_out))
+        self.metrics["tr_rec"].update_state(args[1], tf.nn.sigmoid(cls))
+        self.metrics["tr_pre"].update_state(args[1], tf.nn.sigmoid(cls))
 
     @tf.function
     def val_step(self, x, *args):
@@ -473,25 +485,141 @@ class XNet_v2(object):
         l1 = self.swin_loss(args[0], swin_out)
         l2 = self.cls_loss(args[1], cls)
         val_loss = 0.7 * l1 + 0.3 * l2
-        return val_loss
+        self.metrics["vl_loss"].update_state(val_loss)
+        self.metrics["vl_iou"].update_state(args[0], tf.nn.sigmoid(swin_out))
+        self.metrics["vl_rec"].update_state(args[1], tf.nn.sigmoid(cls))
+        self.metrics["vl_pre"].update_state(args[1], tf.nn.sigmoid(cls))
 
 
-# swin_args = {
-#     "input_shape": (64, 64, 64, 1),
-#     "embed_dim": 48,
-#     "window_size": [7, 7, 7],
-#     "patch_size": [4, 4, 4],
-#     "mask_ratio": 0.01,
-#     "depths": [2, 2, 2, 2],
-#     "mlp_ratio": 4.0,
-#     "num_heads": [3, 6, 12, 24],
-#     "patch_norm": True,
-#     "qkv_bias": True,
-#     "drop_path": 0.5,
-#     "attn_drop": 0.0,
-#     "proj_drop": 0.0,
-# }
+def patch_lstm_v3(input_shape, df=8):
+    pad = 'SAME'
+    act = 'relu'
+    ks = 3
+    st = 1
+    I = layers.Input(input_shape, name='Input')
+    a = T_CIR(df, ks, st, use_norm=1, time_dist=True,
+              mode="conv", name="c0")(I)
+    a = layers.MaxPooling3D(pool_size=(1, 2, 2), name="p1")(a)
 
-# m = get_XNet_V2(**swin_args)
-# m(np.ones((1, 64, 64, 64, 1)))
-# print(m.summary(line_length=128))
+    a = T_CIR(2*df, ks, st, use_norm=1, time_dist=True,
+              mode="conv", name="c1")(a)
+    a = layers.MaxPooling3D(pool_size=(1, 2, 2), name="p2")(a)
+
+    a = T_CIR(4*df, ks, st, use_norm=1, time_dist=True,
+              mode="conv", name="c2")(a)
+    a = layers.MaxPooling3D(pool_size=(1, 2, 2), name="p3")(a)
+
+    a = layers.ConvLSTM2D(4*df, kernel_size=1, strides=1, activation=act,
+                          padding=pad, kernel_initializer="glorot_normal", return_sequences=False)(a)
+    a = tfa.layers.InstanceNormalization()(a)
+    a = layers.MaxPooling2D(pool_size=(2, 2), name="p4")(a)
+
+    a = T_CIR(4*df, ks, st, use_norm=1, time_dist=False,
+              mode="conv", name="c3")(a)
+    a = T_CIR(2*df, ks, st, use_norm=1,
+              time_dist=False, mode="conv", name="c4")(a)
+    a = layers.GlobalAveragePooling2D(name="gap")(a)
+    a = layers.Dense(units=df, activation="relu")(a)
+    # a = tfa.layers.InstanceNormalization()(a)
+    a = layers.Dense(units=1, activation="sigmoid", name="fc")(a)
+    m = Model(I, a, name='patch_lstm_v3')
+    return m
+
+
+def get_ConvLSTM_Model(input_shape, base_filters, init, act, ks, st):
+    I = layers.Input(input_shape)
+    a = layers.ConvLSTM2D(base_filters, kernel_size=ks, strides=st, activation=act,
+                          padding='SAME', kernel_initializer=init, return_sequences=True, name='ConvLSTM1')(I)
+    # a = layers.ConvLSTM2D(2*base_filters, kernel_size=ks, strides=st, activation=act,
+    #                       padding='SAME', kernel_initializer=init, return_sequences=True, name='ConvLSTM2')(a)
+    a = layers.ConvLSTM2D(base_filters, kernel_size=ks, strides=st, activation=act,
+                          padding='SAME', kernel_initializer=init, return_sequences=False, name='ConvLSTM3')(a)
+    a = layers.GlobalAveragePooling2D(name='GAP')(a)
+    a = layers.Dense(units=1, activation='linear',
+                     use_bias=False, kernel_initializer=init, name='FC')(a)
+
+    return Model(inputs=I, outputs=[a])
+
+
+def get_DeformConv_Model(input_shape, ks, base_filters, num_blocks, init, act, conv_mode="deform_conv"):
+    I = layers.Input(input_shape)
+    # o = DCNv2(base_filters, 3, activation=act,
+    #           use_bias=True, kernel_initializer=init)(I)
+
+    L = [I]
+    for i in range(num_blocks):
+        # L.append(dcn_v1(base_filters, ks, num_deformable_group=1,
+        #                 padding="SAME", activation=act, use_bias=True, kernel_initializer=init))
+
+        if conv_mode == "deform_conv_v1":
+            c = DCN_v1(base_filters, ks, padding="SAME",
+                       use_bias=False, kernel_initializer=init)
+        elif conv_mode == "deform_conv_v2":
+            c = DCNv2(base_filters, ks, use_bias=False,
+                      kernel_initializer=init)
+        else:
+            c = layers.Conv2D(
+                base_filters, ks, use_bias=False, kernel_initializer=init, padding="SAME")
+        L.append(c)
+        L.append(layers.LayerNormalization())
+        L.append(layers.LeakyReLU())
+        L.append(layers.MaxPooling2D((2, 2)))
+        base_filters *= 2
+
+    return Sequential(L)
+
+
+class abus_cls(object):
+    def __init__(self, batch_size, input_shape, base_filters, act, ks, st, num_conv_blocks, conv_type, init, loss_fn, optim, **kwargs):
+        super().__init__(**kwargs)
+        self.batch_size = batch_size
+        self.input_shape = input_shape
+        self.deform_model = get_DeformConv_Model(
+            input_shape=input_shape[1:], base_filters=base_filters, ks=ks, num_blocks=num_conv_blocks, init=init, act=act, conv_mode=conv_type)
+        covnlstm_input_shape = (input_shape[0], input_shape[1]//2**num_conv_blocks,
+                                input_shape[2]//2**num_conv_blocks, base_filters*2**(num_conv_blocks-1))
+        self.convlstm_model = get_ConvLSTM_Model(
+            input_shape=covnlstm_input_shape, base_filters=base_filters*2**num_conv_blocks, init=init, act=act, ks=ks, st=st)
+        self.loss_fn = loss_fn
+        self.optim = optim
+        self.metrics = {"tr_loss": metrics.Mean(name="tr_loss"),
+                        "vl_loss": metrics.Mean(name="vl_loss"),
+                        "tr_rec": metrics.Recall(name="tr_rec"),
+                        "tr_pre": metrics.Precision(name="tr_pre"),
+                        "vl_rec": metrics.Recall(name="vl_rec"),
+                        "vl_pre": metrics.Precision(name="vl_pre")
+                        }
+
+    @tf.function
+    def train_step(self, x, *args):
+        with tf.GradientTape() as tape:
+            x_temp = tf.reshape(x, (-1, *self.input_shape[1:]))
+            deform_out = self.deform_model(x_temp)
+            b_s, h, w, c = deform_out.shape.as_list()
+            deform_out = tf.reshape(
+                deform_out, (self.batch_size, -1, h, w, c))
+            convlstm_out = self.convlstm_model(deform_out)
+            tr_loss = self.loss_fn(args[0], convlstm_out)
+        trainable_vars = self.deform_model.trainable_variables + \
+            self.convlstm_model.trainable_variables
+        grads = tape.gradient(tr_loss, trainable_vars)
+        self.optim.apply_gradients(zip(grads, trainable_vars))
+        self.metrics["tr_loss"].update_state(tr_loss)
+        self.metrics["tr_rec"].update_state(
+            args[0], tf.nn.sigmoid(convlstm_out))
+        self.metrics["tr_pre"].update_state(
+            args[0], tf.nn.sigmoid(convlstm_out))
+
+    @tf.function
+    def val_step(self, x, *args):
+        x_temp = tf.reshape(x, (-1, *self.input_shape[1:]))
+        deform_out = self.deform_model(x_temp)
+        b_s, h, w, c = deform_out.shape.as_list()
+        deform_out = tf.reshape(deform_out, (1, -1, h, w, c))
+        convlstm_out = self.convlstm_model(deform_out)
+        val_loss = self.loss_fn(args[0], convlstm_out)
+        self.metrics["vl_loss"].update_state(val_loss)
+        self.metrics["vl_rec"].update_state(
+            args[0], tf.nn.sigmoid(convlstm_out))
+        self.metrics["vl_pre"].update_state(
+            args[0], tf.nn.sigmoid(convlstm_out))
